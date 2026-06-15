@@ -132,7 +132,20 @@ export class RedisConnection extends EventEmitter {
     };
 
     this.initializing = this.init();
-    this.initializing.catch(err => this.emit('error', err));
+    this.initializing.catch(err => {
+      // Only forward the init failure to 'error' listeners. Emitting 'error'
+      // on an EventEmitter with no listener throws, which would turn this
+      // self-handled rejection into an unhandled promise rejection. This is
+      // easy to hit when a consumer (e.g. @nestjs/bullmq) attaches its 'error'
+      // listener only after the owning Queue/Worker has been constructed: a
+      // fast init failure in that window would otherwise crash with an
+      // unhandled rejection. The failure remains observable via
+      // `connection.client` / `waitUntilReady()` and via subsequent 'error'
+      // events once a listener is attached.
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', err);
+      }
+    });
   }
 
   private checkBlockingOptions(
