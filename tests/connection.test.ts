@@ -89,6 +89,40 @@ describe('RedisConnection', () => {
     });
   });
 
+  describe('initialization error handling', () => {
+    it('does not produce an unhandled rejection when init() fails before an "error" listener is attached', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        // The client connects but reports an unsupported Redis version, so
+        // init() rejects. No 'error' listener is attached to the connection,
+        // modelling frameworks (e.g. @nestjs/bullmq) that wire their worker
+        // event listeners only after `new Worker()` returns. The connection's
+        // own `this.initializing.catch(err => this.emit('error', err))` must
+        // not turn that rejection into an unhandled rejection.
+        const client = createMockClusterClient({
+          isCluster: false,
+          info: sinon.stub().resolves('redis_version:1.0.0'),
+        });
+        const connection = new RedisConnection(client as any, {
+          shared: false,
+        });
+
+        await expect(connection.client).rejects.toThrow();
+        // Allow the internal self-catch microtask to run.
+        await new Promise(resolve => setTimeout(resolve, 25));
+
+        expect(unhandled).toEqual([]);
+
+        await connection.close();
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+  });
+
   describe('blocking option', () => {
     it('sets maxRetriesPerRequest to null when blocking is true', () => {
       const connection = new RedisConnection({}, { blocking: true });
